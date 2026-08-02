@@ -1,4 +1,4 @@
-# SafeDeck Agents (Python package: `safepitch`)
+# SafeDeck Agents (Python package: `safeepitch`)
 
 CrewAI pipeline for pitch deck analysis. 5 agents + 1 consolidator.
 

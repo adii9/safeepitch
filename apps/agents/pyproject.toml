@@ -1,5 +1,5 @@
 [project]
-name = "safepitch"
+name = "safeepitch"
 version = "0.2.0"
 description = "SafeDeck AI agents — CrewAI pipeline for pitch deck analysis"
 authors = [{ name = "SafeDeck", email = "team@safedeck.ai" }]

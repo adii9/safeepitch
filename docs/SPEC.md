@@ -5,7 +5,7 @@
 
 ## 1. What SafeDeck Does
 
-AI deal intelligence layer for VCs. Sits between inbound pitch decks and a VC's deal workflow.
+AI deal intelligence layer for VCs. Sits between inbound pitch decks and a VC's deal workflow. (Internal codename: `safeepitch` — external brand is SafeDeck.)
 
 **Core loop:**
 1. Founder emails a pitch deck PDF to `{slug}@safedeck.ai` (or manual upload)
