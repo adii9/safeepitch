@@ -1,0 +1,37 @@
+{
+  "comment": "EventBridge rules — these are managed by SAM templates, not edited here. This file is documentation only.",
+  "rules": [
+    {
+      "name": "audit-completed-fanout",
+      "description": "Fires when an audit completes. Fan-out to Sheets, Slack, WebSocket, Logger.",
+      "event_pattern": {
+        "source": ["safedeck.audit"],
+        "detail-type": ["AuditCompleted"]
+      }
+    },
+    {
+      "name": "deal-stage-changed",
+      "description": "Fires when a deal stage changes. Audit trail + downstream notifications.",
+      "event_pattern": {
+        "source": ["safedeck.deal"],
+        "detail-type": ["StageChanged"]
+      }
+    },
+    {
+      "name": "meeting-scheduled",
+      "description": "Fires when Calendly confirms a meeting. Writes to Meetings table.",
+      "event_pattern": {
+        "source": ["safedeck.calendly"],
+        "detail-type": ["MeetingScheduled"]
+      }
+    },
+    {
+      "name": "meeting-transcribed",
+      "description": "Fires when Fireflies finishes a transcript. Writes to Meetings table.",
+      "event_pattern": {
+        "source": ["safedeck.fireflies"],
+        "detail-type": ["TranscriptReady"]
+      }
+    }
+  ]
+}

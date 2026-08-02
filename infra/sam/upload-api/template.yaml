@@ -1,0 +1,44 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+
+Description: SafeDeck upload API — receives PDF uploads, stores to S3, enqueues audit
+
+Parameters:
+  Environment:
+    Type: String
+
+Globals:
+  Function:
+    Runtime: python3.11
+    MemorySize: 512
+    Timeout: 30
+    Environment:
+      Variables:
+        ENVIRONMENT: !Ref Environment
+
+Resources:
+  UploadApi:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "safedeck-upload-api-${Environment}"
+      CodeUri: ./handler
+      Handler: handler.lambda_handler
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            Path: /upload
+            Method: POST
+      Policies:
+        - S3WritePolicy:
+            BucketName: !Sub "safedeck-decks-${Environment}"
+        - SQSSendMessagePolicy:
+            QueueName: !Sub "safedeck-audit-queue-${Environment}"
+        - DynamoDBCrudPolicy:
+            TableName: !Sub "safedeck-Deals-${Environment}"
+
+Outputs:
+  FunctionArn:
+    Value: !GetAtt UploadApi.Arn
+  ApiEndpoint:
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/upload"

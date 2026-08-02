@@ -1,0 +1,75 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+
+Description: SafeDeck audit worker — 5 agents + 1 consolidator
+
+Parameters:
+  Environment:
+    Type: String
+  MiniMaxApiKey:
+    Type: String
+    NoEcho: true
+  LlamaCloudApiKey:
+    Type: String
+    NoEcho: true
+
+Globals:
+  Function:
+    Runtime: python3.11
+    MemorySize: 2048
+    Timeout: 600
+    Tracing: Active
+    Environment:
+      Variables:
+        ENVIRONMENT: !Ref Environment
+        MINIMAX_API_KEY: !Ref MiniMaxApiKey
+        LLAMA_CLOUD_API_KEY: !Ref LlamaCloudApiKey
+        CREW_MODEL: "minimax/MiniMax-M2.7"
+
+Resources:
+  AuditQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "safedeck-audit-queue-${Environment}"
+      VisibilityTimeout: 900
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt AuditDlq.Arn
+        maxReceiveCount: 3
+
+  AuditDlq:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "safedeck-audit-dlq-${Environment}"
+
+  AuditWorkerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "safedeck-audit-worker-${Environment}"
+      CodeUri: ./handler
+      Handler: handler.lambda_handler
+      ReservedConcurrentExecutions: 2
+      ProvisionedConcurrencyConfig:
+        ProvisionedConcurrentExecutions: 2
+      Events:
+        Queue:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt AuditQueue.Arn
+            BatchSize: 1
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Sub "safedeck-decks-${Environment}"
+        - DynamoDBCrudPolicy:
+            TableName: !Sub "safedeck-Audits-${Environment}"
+        - DynamoDBCrudPolicy:
+            TableName: !Sub "safedeck-Companies-${Environment}"
+        - DynamoDBCrudPolicy:
+            TableName: !Sub "safedeck-Deals-${Environment}"
+        - SQSPollerPolicy:
+            QueueName: !GetAtt AuditQueue.QueueName
+
+Outputs:
+  FunctionArn:
+    Value: !GetAtt AuditWorkerFunction.Arn
+  QueueArn:
+    Value: !GetAtt AuditQueue.Arn

@@ -1,0 +1,45 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+
+Description: SafeDeck meeting integrations — Calendly + Fireflies webhooks
+
+Parameters:
+  Environment:
+    Type: String
+
+Globals:
+  Function:
+    Runtime: python3.11
+    MemorySize: 512
+    Timeout: 30
+    Environment:
+      Variables:
+        ENVIRONMENT: !Ref Environment
+
+Resources:
+  MeetingIntegrations:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "safedeck-meeting-integrations-${Environment}"
+      CodeUri: ./handler
+      Handler: handler.lambda_handler
+      Events:
+        CalendlyWebhook:
+          Type: Api
+          Properties:
+            Path: /webhooks/calendly
+            Method: POST
+        FirefliesWebhook:
+          Type: Api
+          Properties:
+            Path: /webhooks/fireflies
+            Method: POST
+      Policies:
+        - DynamoBCrudPolicy:
+            TableName: !Sub "safedeck-Meetings-${Environment}"
+        - DynamoBCrudPolicy:
+            TableName: !Sub "safedeck-Integrations-${Environment}"
+
+Outputs:
+  FunctionArn:
+    Value: !GetAtt MeetingIntegrations.Arn

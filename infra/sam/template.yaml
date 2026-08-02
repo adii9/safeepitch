@@ -1,0 +1,103 @@
+# Root SAM template for SafeDeck
+# Orchestrator: pulls in all 8 Lambda stacks via nested stacks
+# Deploy: sam build && sam deploy --config-env dev
+
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+
+Description: SafeDeck — VC deal intelligence (beta)
+
+Globals:
+  Function:
+    Runtime: python3.11
+    Architectures: [x86_64]
+    MemorySize: 512
+    Timeout: 30
+    Tracing: Active
+    Environment:
+      Variables:
+        ENVIRONMENT: !Ref Environment
+        LOG_LEVEL: INFO
+        POWERTOOLS_SERVICE_NAME: safedeck
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, prod]
+  MiniMaxApiKey:
+    Type: String
+    NoEcho: true
+    Default: ""
+  LlamaCloudApiKey:
+    Type: String
+    NoEcho: true
+    Default: ""
+
+Resources:
+  # ---------- Nested stacks ----------
+  AuditWorker:
+    Type: AWS::Serverless::Application
+    Properties:
+      Location: ./audit-worker/template.yaml
+      Parameters:
+        Environment: !Ref Environment
+        MiniMaxApiKey: !Ref MiniMaxApiKey
+        LlamaCloudApiKey: !Ref LlamaCloudApiKey
+
+  UploadApi:
+    Type: AWS::Serverless::Application
+    Properties:
+      Location: ./upload-api/template.yaml
+      Parameters:
+        Environment: !Ref Environment
+
+  DashboardApi:
+    Type: AWS::Serverless::Application
+    Properties:
+      Location: ./dashboard-api/template.yaml
+      Parameters:
+        Environment: !Ref Environment
+
+  OnboardingApi:
+    Type: AWS::Serverless::Application
+    Properties:
+      Location: ./onboarding-api/template.yaml
+      Parameters:
+        Environment: !Ref Environment
+
+  CompanyResolver:
+    Type: AWS::Serverless::Application
+    Properties:
+      Location: ./company-resolver/template.yaml
+      Parameters:
+        Environment: !Ref Environment
+
+  EmailClassifier:
+    Type: AWS::Serverless::Application
+    Properties:
+      Location: ./email-classifier/template.yaml
+      Parameters:
+        Environment: !Ref Environment
+
+  MeetingIntegrations:
+    Type: AWS::Serverless::Application
+    Properties:
+      Location: ./meeting-integrations/template.yaml
+      Parameters:
+        Environment: !Ref Environment
+
+  IcMemoGenerator:
+    Type: AWS::Serverless::Application
+    Properties:
+      Location: ./ic-memo-generator/template.yaml
+      Parameters:
+        Environment: !Ref Environment
+
+Outputs:
+  AuditWorkerEndpoint:
+    Value: !GetAtt AuditWorker.Outputs.FunctionArn
+  UploadApiEndpoint:
+    Value: !GetAtt UploadApi.Outputs.FunctionArn
+  DashboardApiEndpoint:
+    Value: !GetAtt DashboardApi.Outputs.FunctionArn

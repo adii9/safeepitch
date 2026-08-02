@@ -1,0 +1,23 @@
+version = 0.1
+
+[default]
+region = "eu-north-1"
+
+[default.deploy]
+stack_name = "safedeck-root"
+s3_bucket = "safedeck-sam-deployments"
+s3_prefix = "root"
+capabilities = "CAPABILITY_IAM CAPABILITY_NAMED_IAM"
+confirm_changeset = true
+resolve_s3 = true
+
+[dev]
+[dev.deploy]
+stack_name = "safedeck-root-dev"
+parameter_overrides = "Environment=dev"
+
+[prod]
+[prod.deploy]
+stack_name = "safedeck-root-prod"
+parameter_overrides = "Environment=prod"
+confirm_changeset = true

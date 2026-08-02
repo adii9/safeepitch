@@ -1,0 +1,76 @@
+name: Deploy to prod
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+jobs:
+  deploy-lambdas:
+    name: Deploy SAM stacks (prod)
+    runs-on: ubuntu-latest
+    environment:
+      name: prod
+      url: https://safedeck.ai
+    defaults:
+      run:
+        working-directory: infra/sam
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/setup-sam@v2
+      - uses: aws-actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: eu-north-1
+      - name: Build all SAM stacks
+        run: sam build --parallel
+      - name: Deploy audit worker
+        run: sam deploy --config-env prod --stack-name safedeck-audit-worker-prod
+      - name: Deploy dashboard API
+        run: sam deploy --config-env prod --stack-name safedeck-dashboard-api-prod
+      - name: Deploy upload API
+        run: sam deploy --config-env prod --stack-name safedeck-upload-api-prod
+      - name: Deploy onboarding API
+        run: sam deploy --config-env prod --stack-name safedeck-onboarding-api-prod
+      - name: Deploy company resolver
+        run: sam deploy --config-env prod --stack-name safedeck-company-resolver-prod
+      - name: Deploy email classifier
+        run: sam deploy --config-env prod --stack-name safedeck-email-classifier-prod
+      - name: Deploy meeting integrations
+        run: sam deploy --config-env prod --stack-name safedeck-meeting-integrations-prod
+      - name: Deploy IC memo generator
+        run: sam deploy --config-env prod --stack-name safedeck-ic-memo-generator-prod
+
+  deploy-web:
+    name: Deploy Web (prod)
+    runs-on: ubuntu-latest
+    environment:
+      name: prod
+      url: https://safedeck.ai
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - name: Publish to S3 + invalidate CloudFront
+        run: |
+          aws s3 sync dist/ s3://safedeck-web-prod --delete
+          aws cloudfront create-invalidation \
+            --distribution-id ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID_PROD }} \
+            --paths "/*"
+        env:
+          AWS_REGION: eu-north-1

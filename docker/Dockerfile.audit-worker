@@ -1,0 +1,40 @@
+# syntax=docker/dockerfile:1.7
+#
+# SafeDeck audit worker — Lambda container image.
+# Uses the AWS Lambda Python 3.11 base image so the image is deployable
+# directly as a Lambda function (with PackageType=Image).
+#
+# Same image also runs locally via `docker run` for testing.
+#
+# Usage:
+#   docker build -f docker/Dockerfile.audit-worker -t safedeck-audit-worker:dev .
+#
+# Local invocation (mock SQS event):
+#   docker run --rm \
+#     -e MINIMAX_API_KEY=sk-cp-... \
+#     -e LLAMA_CLOUD_API_KEY=llx-... \
+#     safedeck-audit-worker:dev \
+#     handler.lambda_handler '{"Records":[{"body":"{\"audit_id\":\"x\",\"s3_key\":\"y\",\"tenant_id\":\"z\"}"}]}'
+
+FROM public.ecr.aws/lambda/python:3.11
+
+# System deps for LlamaParse + crewai
+RUN yum install -y gcc gcc-c++ make openssl-devel && \
+    yum clean all && \
+    rm -rf /var/cache/yum
+
+# Install uv for fast Python dep management
+RUN pip install --no-cache-dir uv
+
+# Copy Python project
+WORKDIR /var/task
+COPY apps/agents/ ./apps/agents/
+COPY infra/sam/audit-worker/ ./infra/sam/audit-worker/
+
+# Install Python deps via uv into the Lambda layer location
+ENV PYTHONPATH=/var/task/apps/agents/src:/var/task/infra/sam/audit-worker:$PYTHONPATH
+
+RUN cd apps/agents && uv sync --no-dev && uv pip install --system .
+
+# Handler entrypoint — Lambda runtime expects module.handler in CMD
+CMD ["infra/sam/audit-worker/handler.lambda_handler"]

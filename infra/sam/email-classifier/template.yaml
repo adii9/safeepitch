@@ -1,0 +1,41 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+
+Description: SafeDeck email classifier — LLM gate for relevance
+
+Parameters:
+  Environment:
+    Type: String
+
+Globals:
+  Function:
+    Runtime: python3.11
+    MemorySize: 1024
+    Timeout: 60
+    Environment:
+      Variables:
+        ENVIRONMENT: !Ref Environment
+        CREW_MODEL: "minimax/MiniMax-M2.7"
+
+Resources:
+  EmailClassifier:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "safedeck-email-classifier-${Environment}"
+      CodeUri: ./handler
+      Handler: handler.lambda_handler
+      Events:
+        Classify:
+          Type: Api
+          Properties:
+            Path: /emails/classify
+            Method: POST
+      Policies:
+        - DynamoBCrudPolicy:
+            TableName: !Sub "safedeck-Emails-${Environment}"
+        - SQSSendMessagePolicy:
+            QueueName: !Sub "safedeck-audit-queue-${Environment}"
+
+Outputs:
+  FunctionArn:
+    Value: !GetAtt EmailClassifier.Arn

@@ -1,0 +1,53 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+
+Description: SafeDeck onboarding API — preferences, criteria, rating template
+
+Parameters:
+  Environment:
+    Type: String
+
+Globals:
+  Function:
+    Runtime: python3.11
+    MemorySize: 512
+    Timeout: 30
+    Environment:
+      Variables:
+        ENVIRONMENT: !Ref Environment
+
+Resources:
+  OnboardingApi:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "safedeck-onboarding-api-${Environment}"
+      CodeUri: ./handler
+      Handler: handler.lambda_handler
+      Events:
+        GetProfile:
+          Type: Api
+          Properties:
+            Path: /profile
+            Method: GET
+        UpdateProfile:
+          Type: Api
+          Properties:
+            Path: /profile
+            Method: PUT
+        UpdateCriteria:
+          Type: Api
+          Properties:
+            Path: /criteria
+            Method: PUT
+        UpdateRating:
+          Type: Api
+          Properties:
+            Path: /rating
+            Method: PUT
+      Policies:
+        - DynamoBCrudPolicy:
+            TableName: !Sub "safedeck-SafeDeckUsers-${Environment}"
+
+Outputs:
+  FunctionArn:
+    Value: !GetAtt OnboardingApi.Arn

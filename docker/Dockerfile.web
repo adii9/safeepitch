@@ -1,0 +1,38 @@
+# syntax=docker/dockerfile:1.7
+#
+# SafeDeck web — multi-stage build.
+# - Stage 1 (deps): install npm dependencies
+# - Stage 2 (build): build the static bundle
+# - Stage 3 (runtime): nginx serving the static bundle
+#
+# Usage:
+#   docker build -f docker/Dockerfile.web -t safedeck-web:dev .
+#   docker run -d -p 3000:80 --name safedeck-web safedeck-web:dev
+#   open http://localhost:3000
+
+ARG NODE_VERSION=20
+ARG NGINX_VERSION=1.27
+
+# ---------- 1. deps ----------
+FROM node:${NODE_VERSION}-alpine AS deps
+WORKDIR /app
+COPY apps/web/package.json apps/web/package-lock.json* ./
+RUN npm ci || npm install
+
+# ---------- 2. build ----------
+FROM node:${NODE_VERSION}-alpine AS build
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY apps/web/ ./
+ARG VITE_API_BASE_URL=http://localhost:3001
+ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
+RUN npm run build
+
+# ---------- 3. runtime ----------
+FROM nginx:${NGINX_VERSION}-alpine AS runtime
+COPY --from=build /app/dist /usr/share/nginx/html
+COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
+EXPOSE 80
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD wget -q -O /dev/null http://localhost/ || exit 1
+CMD ["nginx", "-g", "daemon off;"]

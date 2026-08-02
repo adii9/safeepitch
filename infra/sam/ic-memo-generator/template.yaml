@@ -1,0 +1,43 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+
+Description: SafeDeck IC memo generator — template + missing fields
+
+Parameters:
+  Environment:
+    Type: String
+
+Globals:
+  Function:
+    Runtime: python3.11
+    MemorySize: 1024
+    Timeout: 60
+    Environment:
+      Variables:
+        ENVIRONMENT: !Ref Environment
+        CREW_MODEL: "minimax/MiniMax-M2.7"
+
+Resources:
+  IcMemoGenerator:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "safedeck-ic-memo-generator-${Environment}"
+      CodeUri: ./handler
+      Handler: handler.lambda_handler
+      Events:
+        Generate:
+          Type: Api
+          Properties:
+            Path: /deals/{deal_id}/memo
+            Method: POST
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Sub "safedeck-Audits-${Environment}"
+        - DynamoDBReadPolicy:
+            TableName: !Sub "safedeck-Deals-${Environment}"
+        - DynamoDBReadPolicy:
+            TableName: !Sub "safedeck-Meetings-${Environment}"
+
+Outputs:
+  FunctionArn:
+    Value: !GetAtt IcMemoGenerator.Arn

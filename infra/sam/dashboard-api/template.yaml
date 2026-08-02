@@ -1,0 +1,56 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+
+Description: SafeDeck dashboard API — reads deals, audits, meetings
+
+Parameters:
+  Environment:
+    Type: String
+
+Globals:
+  Function:
+    Runtime: python3.11
+    MemorySize: 512
+    Timeout: 30
+    Environment:
+      Variables:
+        ENVIRONMENT: !Ref Environment
+
+Resources:
+  DashboardApi:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "safedeck-dashboard-api-${Environment}"
+      CodeUri: ./handler
+      Handler: handler.lambda_handler
+      Events:
+        ListDeals:
+          Type: Api
+          Properties:
+            Path: /deals
+            Method: GET
+        GetDeal:
+          Type: Api
+          Properties:
+            Path: /deals/{deal_id}
+            Method: GET
+        UpdateDealStage:
+          Type: Api
+          Properties:
+            Path: /deals/{deal_id}/stage
+            Method: PATCH
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Sub "safedeck-Deals-${Environment}"
+        - DynamoDBReadPolicy:
+            TableName: !Sub "safedeck-Audits-${Environment}"
+        - DynamoDBReadPolicy:
+            TableName: !Sub "safedeck-Meetings-${Environment}"
+        - DynamoDBReadPolicy:
+            TableName: !Sub "safedeck-Companies-${Environment}"
+        - DynamoBCrudPolicy:
+            TableName: !Sub "safedeck-Deals-${Environment}"
+
+Outputs:
+  FunctionArn:
+    Value: !GetAtt DashboardApi.Arn

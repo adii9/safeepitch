@@ -1,0 +1,76 @@
+# OS
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Editors
+.vscode/
+.idea/
+*.iml
+*.code-workspace
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+ENV/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Node
+node_modules/
+.pnp/
+.pnp.js
+.parcel-cache/
+.next/
+out/
+*.tsbuildinfo
+.env.local
+.env.*.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# SAM / AWS
+.aws-sam/
+sam-*.yaml
+*.sam.yaml
+.venv-lambda/
+lambda_layer/
+
+# Logs
+*.log
+logs/
+
+# Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+
+# Test artifacts
+test_audit_result.json
+crew_output.json
+*.db
+!apps/agents/safedeck.db  # if intentional
+
+# Build outputs
+graphify-out/
+.pytest_cache/
+.crewai_knowledge/

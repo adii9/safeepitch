@@ -1,0 +1,22 @@
+# docker-compose.agents.yml — runs the audit worker for local testing.
+#
+# Builds from docker/Dockerfile.audit-worker. Set MiniMax/Llama keys via env.
+# The SQS event is mocked via the command override.
+#
+# Usage:
+#   MINIMAX_API_KEY=sk-cp-... LLAMA_CLOUD_API_KEY=llx-... \
+#     docker compose -f docker/docker-compose.agents.yml up --build
+
+services:
+  audit-worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.audit-worker
+    image: safedeck-audit-worker:dev
+    container_name: safedeck-audit-worker
+    environment:
+      MINIMAX_API_KEY: ${MINIMAX_API_KEY}
+      LLAMA_CLOUD_API_KEY: ${LLAMA_CLOUD_API_KEY}
+      AWS_REGION: ${AWS_REGION:-eu-north-1}
+      ENVIRONMENT: dev
+    command: ["infra/sam/audit-worker/handler.lambda_handler"]

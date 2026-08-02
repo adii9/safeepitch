@@ -1,0 +1,38 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+
+Description: SafeDeck company resolver — domain → company_id (1:1 mapping)
+
+Parameters:
+  Environment:
+    Type: String
+
+Globals:
+  Function:
+    Runtime: python3.11
+    MemorySize: 256
+    Timeout: 15
+    Environment:
+      Variables:
+        ENVIRONMENT: !Ref Environment
+
+Resources:
+  CompanyResolver:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "safedeck-company-resolver-${Environment}"
+      CodeUri: ./handler
+      Handler: handler.lambda_handler
+      Events:
+        Resolve:
+          Type: Api
+          Properties:
+            Path: /companies/resolve
+            Method: POST
+      Policies:
+        - DynamoBCrudPolicy:
+            TableName: !Sub "safedeck-Companies-${Environment}"
+
+Outputs:
+  FunctionArn:
+    Value: !GetAtt CompanyResolver.Arn
