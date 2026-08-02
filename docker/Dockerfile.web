@@ -2,16 +2,29 @@
 #
 # SafeDeck web — multi-stage build.
 # - Stage 1 (deps): install npm dependencies
-# - Stage 2 (build): build the static bundle
+# - Stage 2 (build): build the static bundle (with VITE_* env vars)
 # - Stage 3 (runtime): nginx serving the static bundle
 #
 # Usage:
-#   docker build -f docker/Dockerfile.web -t safedeck-web:dev .
+#   docker build -f docker/Dockerfile.web \
+#     --build-arg VITE_GOOGLE_CLIENT_ID=... \
+#     --build-arg VITE_API_BASE_URL=http://localhost:3001 \
+#     -t safedeck-web:dev .
 #   docker run -d -p 3000:80 --name safedeck-web safedeck-web:dev
 #   open http://localhost:3000
 
 ARG NODE_VERSION=20
 ARG NGINX_VERSION=1.27
+
+# Vite inlines VITE_* env vars at build time. They must be passed as
+# --build-arg (or set in CI's secret store).
+ARG VITE_GOOGLE_CLIENT_ID=""
+ARG VITE_CF_DOMAIN=""
+ARG VITE_RAZORPAY_KEY_ID=""
+ARG VITE_SAFEPITCH_FUNCTION_URL=/api
+ARG VITE_DATA_SOURCE=AWS
+ARG VITE_N8N_DASHBOARD_UPLOAD_WEBHOOK=""
+ARG VITE_API_BASE_URL=http://localhost:3001
 
 # ---------- 1. deps ----------
 FROM node:${NODE_VERSION}-alpine AS deps
@@ -24,8 +37,21 @@ FROM node:${NODE_VERSION}-alpine AS build
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY apps/web/ ./
-ARG VITE_API_BASE_URL=http://localhost:3001
-ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
+# Re-declare ARGs after FROM (Docker scoping rule)
+ARG VITE_GOOGLE_CLIENT_ID
+ARG VITE_CF_DOMAIN
+ARG VITE_RAZORPAY_KEY_ID
+ARG VITE_SAFEPITCH_FUNCTION_URL
+ARG VITE_DATA_SOURCE
+ARG VITE_N8N_DASHBOARD_UPLOAD_WEBHOOK
+ARG VITE_API_BASE_URL
+ENV VITE_GOOGLE_CLIENT_ID=$VITE_GOOGLE_CLIENT_ID \
+    VITE_CF_DOMAIN=$VITE_CF_DOMAIN \
+    VITE_RAZORPAY_KEY_ID=$VITE_RAZORPAY_KEY_ID \
+    VITE_SAFEPITCH_FUNCTION_URL=$VITE_SAFEPITCH_FUNCTION_URL \
+    VITE_DATA_SOURCE=$VITE_DATA_SOURCE \
+    VITE_N8N_DASHBOARD_UPLOAD_WEBHOOK=$VITE_N8N_DASHBOARD_UPLOAD_WEBHOOK \
+    VITE_API_BASE_URL=$VITE_API_BASE_URL
 RUN npm run build
 
 # ---------- 3. runtime ----------
