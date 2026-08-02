@@ -1,0 +1,62 @@
+# .dockerignore — keep the build context small
+
+# VCS
+.git/
+.gitignore
+.gitattributes
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Node
+apps/web/node_modules/
+apps/web/dist/
+apps/web/.vite/
+apps/web/coverage/
+apps/web/*.log
+apps/web/.env
+apps/web/.env.local
+apps/web/.env.*.local
+
+# Python
+apps/agents/.venv/
+apps/agents/__pycache__/
+apps/agents/**/__pycache__/
+apps/agents/*.egg-info/
+apps/agents/build/
+apps/agents/dist/
+apps/agents/.pytest_cache/
+apps/agents/.ruff_cache/
+apps/agents/.mypy_cache/
+apps/agents/*.db
+apps/agents/test_*.json
+apps/agents/crew_output.json
+apps/agents/knowledge/
+apps/agents/graphify-out/
+
+# Infra artifacts
+infra/sam/.aws-sam/
+infra/sam/sam-*.yaml
+
+# Docker — keep docker/nginx.conf (needed by Dockerfile.web), exclude the rest
+docker/docker-compose.yml
+docker/docker-compose.agents.yml
+docker/Dockerfile.audit-worker
+docker/README.md
+.dockerignore
+!docker/nginx.conf
+
+# Docs (not needed in image)
+docs/
+*.md
+!apps/web/README.md
+!apps/agents/README.md
+
+# Logs / runtime
+*.log
+logs/
+tmp/

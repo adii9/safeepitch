@@ -1,0 +1,145 @@
+pitch_deck_extraction_task:
+  description: >
+    FIRST: Identify the company from the pitch deck content. Read the deck carefully — look for the company name in the title, headers, website, or anywhere explicitly stated. Normalize it to the canonical spelling/capitalization (e.g. "Furnisto" not "furnisto", "BMW TechWorks" not "BMW").
+
+    Then extract all other data requested in the following fields:
+    {dynamic_kyc_fields}
+
+    EXTRACTION RULES — read carefully, these directly affect audit quality:
+
+    1. Re-read the deck before defaulting to "Not stated". Many fields are present
+       but written in non-obvious places (e.g. "burn rate" is often phrased as
+       "monthly cash outflow", "NPS" as "customer satisfaction score", "MRR" as
+       "monthly recurring revenue"). Look for synonyms, implied values, and
+       forward-looking projections.
+
+    2. Distinguish THREE states for each field, not two:
+       - "Stated"     = directly mentioned in the deck (e.g. "TAM: Rs. 48,000 Cr")
+       - "Implied"    = derivable from context (e.g. "incorporated 2024" implies
+                        pre-seed; "5 pilot orders" implies traction stage = pilot;
+                        "raising $500K" implies amount_raising exists)
+       - "Not stated" = truly absent — neither stated nor reasonably inferable
+
+       For "Implied" values, write the inferred value and prefix with "[implied] "
+       so the downstream verification step knows it was inferred, not stated.
+       Example: "two_x_founder_flag": "[implied] No (first-time founders)"
+
+    3. Numeric fields (revenue, burn, MRR, valuations, traction) are often given
+       as projections, ranges, or growth targets. Use the MOST RECENT explicit
+       number. If only a projection is given (e.g. "targeting Rs. 1 Cr MRR by
+       Q1 2026"), use that with the qualifier "[projected]". Do NOT write
+       "Not stated" when a number is in the deck even if it's forward-looking.
+
+    4. For long-form fields (founder_background, competitive_landscape, problem_size):
+       extract the most informative 1-3 sentences verbatim or paraphrased, not a
+       single phrase.
+
+    5. NEVER search the web. Focus ONLY on the provided documents.
+  expected_output: >
+    A JSON object containing the canonical company_name first, then all other extracted fields. Every field should have a value — "Not stated" ONLY when truly absent. Use "[implied] " or "[projected] " prefixes to mark inferred/projected values.
+  agent: extraction_specialist
+
+internet_verification_task:
+  description: >
+    You have two types of data for this company (name identified from the pitch deck):
+    1. Pitch Deck data (from the extraction task — already has values for most fields)
+    2. Web search (use this ONLY to fill in "Not stated" fields OR to verify conflicting data)
+
+    CRITICAL: Use the company name from the extraction task context, NOT the original user-supplied name. The company name in the extraction output is the canonical name found in the pitch deck.
+
+    Rules — CRITICAL, follow in order:
+    a) For EVERY field from the extraction task: if the value is NOT "Not stated", mark it as source_url = "pitch_deck". Do NOT search the web for it. Do NOT use any other URL.
+    b) For fields that ARE "Not stated": search Tracxn, PitchBook, LinkedIn, or general web using the canonical company name. If found, use the real source URL. If not found anywhere, set source_url = null.
+    c) NEVER use a LinkedIn profile URL as source for business metrics (amount_raising, revenue, burn_rate, runway, valuation, TAM, SAM, SOM, MRR, etc.). These come from pitch deck or not at all.
+    d) NEVER use a LinkedIn Company Page URL as source for fields the pitch deck already covers.
+
+    Output format: {{"field_key": {{"value": "...", "source_url": "pitch_deck" | "https://..." | null}}}}
+  expected_output: >
+    A JSON object where each key maps to an object with 'value' and 'source_url'.
+    source_url = "pitch_deck" for all fields already in the pitch deck.
+    source_url = real URL for "Not stated" fields found via web search.
+    source_url = null for "Not stated" fields not found on the web.
+  agent: osint_investigator
+  context:
+    - pitch_deck_extraction_task
+
+discrepancy_analysis_task:
+  description: >
+    Compare the initial Pitch Deck Claims against the Web Verified Data for {company_name}.
+    Note that the Web Verified Data will have a {"value": ..., "source_url": ...} structure. You should compare against the 'value'.
+    Generate two lists:
+    - Red Flags: Where internet data contradicts the pitch deck (e.g. false claims, inflated metrics, missing registrations).
+    - Green Flags: Verified strong points (e.g. verified founder exits, strong verified traction).
+  expected_output: >
+    A JSON object with two arrays: "red_flags" and "green_flags".
+  agent: risk_analyst
+  context:
+    - pitch_deck_extraction_task
+    - internet_verification_task
+
+startup_rating_task:
+  description: >
+    Review all gathered data, red flags, and green flags for {company_name}.
+    Then, evaluate the startup based on the following VC Rating Criteria:
+    {rating_criteria}
+
+    If no criteria are provided, apply your best judgment based on standard VC evaluation frameworks.
+    Calculate the numerical score based on the weights/points in the criteria.
+    Provide the final score and a paragraph explaining the reasoning for the score.
+  expected_output: >
+    A JSON object with "score" (number) and "reasoning" (string).
+  agent: ic_scoring_agent
+  context:
+    - pitch_deck_extraction_task
+    - internet_verification_task
+    - discrepancy_analysis_task
+
+final_consolidation_task:
+  description: >
+    Merge all the information gathered across tasks into one final JSON object.
+    It must contain the following top-level keys:
+    1. "extracted_deck_data": The original claims from the deck.
+    2. "internet_verified_data": The fact-checked data, where EVERY key maps to an object containing "value" and "source_url".
+    3. "risk_analysis": The red and green flags.
+    4. "verification": The truth score (0-100) and one-sentence summary from the claim truth scoring task.
+    5. "scoring": The final numerical score and reasoning.
+  expected_output: >
+    A comprehensive, unified JSON object containing the extracted data, verified data (with nested sources), flags, verification summary, score, and reasoning.
+  agent: extraction_specialist
+  context:
+    - pitch_deck_extraction_task
+    - internet_verification_task
+    - discrepancy_analysis_task
+    - startup_rating_task
+
+claim_truth_scoring_task:
+  description: >
+    You are summarising the verification result for {company_name} based ONLY on the
+    red_flags, green_flags, and the internet_verified_data produced by the upstream tasks.
+    Do not search the web. Do not re-read the deck. Do not compute a numeric score — a
+    deterministic Python function in safedeck.models will compute the score from your
+    upstream outputs. Your job is to write ONE sentence (max 25 words) and a tier.
+
+    TIER MAPPING (purely a function of how strong the evidence is, not a number):
+    - If red_flags is empty AND every internet_verified_data field has a real external
+      URL: tier = "high"
+    - If red_flags has 1-2 items OR some fields have source_url == "pitch_deck" or null:
+      tier = "medium"
+    - If red_flags has 3+ items: tier = "low"
+    Use your judgement on the exact tier boundary based on severity, not just counts.
+
+    SUMMARY RULE:
+    Write a single sentence (max 25 words) stating the strongest concern. If there are
+    no red_flags, the sentence must state what was NOT verified. If there are red_flags,
+    the sentence must name the highest-severity one (the one whose description mentions
+    revenue / team / legal terms, or the first one listed if no clear severity signal).
+  expected_output: >
+    A JSON object with exactly two keys:
+    - "tier" (one of "high" | "medium" | "low")
+    - "summary" (one sentence, max 25 words)
+    The "truth_score" key will be filled in by Python after you respond. Do not set it.
+  agent: claim_truth_scorer
+  context:
+    - pitch_deck_extraction_task
+    - internet_verification_task
+    - discrepancy_analysis_task
