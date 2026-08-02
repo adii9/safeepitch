@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Layers, LogOut, Menu, X } from 'lucide-react';
 import { googleLogout } from '@react-oauth/google';
 import { useGoogleLogin } from '@react-oauth/google';
+import { loginWithGoogle } from '../utils/api';
 
 const Header = () => {
   const [scrolled, setScrolled] = useState(false);
@@ -14,47 +15,31 @@ const Header = () => {
     prompt: 'consent',
     onSuccess: async (codeResponse) => {
       try {
+        // 1. Get user info from Google
         const userInfoResponse = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-          headers: { Authorization: `Bearer ${codeResponse.access_token}` }
+          headers: { Authorization: `Bearer ${codeResponse.access_token}` },
         });
         const userInfo = await userInfoResponse.json();
 
-        const syncPayload = {
-          httpMethod: 'POST',
-          body: JSON.stringify({ userId: userInfo.sub || `google_${Date.now()}`, email: userInfo.email }),
-          headers: { 'Content-Type': 'application/json' },
-          requestContext: { identity: { sourceIp: '127.0.0.1' } },
-        };
+        // 2. Sync to our backend via the new API client
+        const syncData = await loginWithGoogle({
+          access_token: codeResponse.access_token,
+          refresh_token: codeResponse.refresh_token,
+          userInfo,
+        });
 
-        const syncResponse = await fetch(
-          'https://i7az96pt3l.execute-api.eu-north-1.amazonaws.com/default/user-sync',
-          {
-            method: 'POST',
-            headers: {
-              'x-api-key': import.meta.env.VITE_AWS_API_KEY,
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(syncPayload),
-          }
-        );
+        localStorage.setItem('safedeck_user', JSON.stringify({
+          name: userInfo.name,
+          email: userInfo.email,
+          picture: userInfo.picture,
+          givenName: userInfo.given_name,
+          userId: userInfo.sub,
+          access_token: codeResponse.access_token,
+          user: syncData.user || {},
+        }));
 
-        if (syncResponse.ok) {
-          let syncData = JSON.parse(await syncResponse.text()).body;
-          if (typeof syncData === 'string') syncData = JSON.parse(syncData);
-
-          localStorage.setItem('safedeck_user', JSON.stringify({
-            name: userInfo.name,
-            email: userInfo.email,
-            picture: userInfo.picture,
-            givenName: userInfo.given_name,
-            userId: userInfo.sub,
-            access_token: codeResponse.access_token,
-            user: syncData.user || {},
-          }));
-
-          setCurrentUser({ ...userInfo, user: syncData.user || {} });
-          window.location.href = '/onboarding?paid=true';
-        }
+        setCurrentUser({ ...userInfo, user: syncData.user || {} });
+        window.location.href = '/onboarding?paid=true';
       } catch (error) {
         console.error('Login failed:', error);
       }

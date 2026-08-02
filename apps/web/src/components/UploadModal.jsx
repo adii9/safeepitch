@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Upload, FileText, Loader, CheckCircle, AlertCircle } from 'lucide-react';
+import { listAudits } from '../utils/api';
 
 const STAGES = [
   { id: 'idle',        label: 'Ready to upload' },
@@ -150,24 +151,12 @@ const UploadModal = ({ onClose, onSuccess }) => {
           const userId = stored.user?.user_id || stored.sub || stored.userId;
           const tenantId = stored.user?.user_id || stored.sub;
 
-          const auditRes = await fetch('https://zh2feylzki.execute-api.eu-north-1.amazonaws.com/default/audits', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'x-api-key': import.meta.env.VITE_AWS_API_KEY,
-            },
-            body: JSON.stringify({ 
-              userId: stored.user?.user_id || stored.sub,
-              tenantId: stored.user?.user_id || stored.sub,
-              email: stored.user?.email || stored.email,
-            }),
+          const data = await listAudits({
+            user_id: stored.user?.user_id || stored.sub,
+            email: stored.user?.email || stored.email,
           });
 
-          if (auditRes.ok) {
-            let data = await auditRes.json();
-            if (data.body && typeof data.body === 'string') {
-              try { data = JSON.parse(data.body); } catch {}
-            }
+          if (data) {
             const decks = Array.isArray(data) ? data : [];
             const matching = decks.filter(
               d => d.company_name?.toLowerCase() === companyName.trim().toLowerCase()

@@ -5,6 +5,7 @@ import { googleLogout } from '@react-oauth/google';
 import { useNavigate } from 'react-router-dom';
 import DeckModal from '../components/DeckModal';
 import UploadModal from '../components/UploadModal';
+import { listAudits } from '../utils/api';
 
 const Dashboard = () => {
   const navigate = useNavigate();
@@ -150,25 +151,16 @@ const Dashboard = () => {
           setDecks(mappedDecks);
 
         } else {
-          // Default AWS Fetching
-          const response = await fetch('https://zh2feylzki.execute-api.eu-north-1.amazonaws.com/default/audits', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'x-api-key': import.meta.env.VITE_AWS_API_KEY
-            },
-            body: JSON.stringify({ userId: currentUser?.sub || currentUser?.userId })
-          });
-          
-          if (response.ok) {
-            let data = await response.json();
-            // API gateway might return body as a string containing JSON array.
-            if (data.body && typeof data.body === 'string') {
-               try {
-                 data = JSON.parse(data.body);
-               } catch(e) { console.error('Failed to parse response body', e); }
-            }
-            
+          // Default: call new API Gateway endpoint via api.js
+          let data = null;
+          try {
+            data = await listAudits({ user_id: currentUser?.userId });
+          } catch (err) {
+            console.error('Failed to fetch audits:', err);
+          }
+
+          if (data) {
+            // New API returns audits as a flat array (no .body wrapper)
             const currentTenantId = currentUser?.user?.user_id;
             const decksData = (Array.isArray(data) ? data : []).filter(item => item.tenant_id === currentTenantId);
             
@@ -228,7 +220,7 @@ const Dashboard = () => {
             
             setDecks(mappedDecks);
           } else {
-            console.error('Failed to fetch decks from AWS:', response.status);
+            console.error('No audits returned for user');
           }
         }
       } catch (error) {
