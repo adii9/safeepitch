@@ -1,54 +1,76 @@
-# Google OAuth Setup for SafeDeck
+# Google OAuth Consent Screen Configuration
 
-## The OAuth client ID
+For a brand-new OAuth client in a brand-new GCP project, the **consent screen must be configured BEFORE the client can be used for any flow**. If the consent screen is in an unconfigured state, every OAuth request returns `401 invalid_client`, even though the client ID is technically registered.
 
-`apps/web/.env` has:
+## Quick check: is this your problem?
+
+Run this in your terminal:
+
+```bash
+curl -s "https://accounts.google.com/o/oauth2/v2/auth?client_id=YOUR_CLIENT_ID&redirect_uri=http://localhost:3000&response_type=token&scope=openid" -o /dev/null -w "HTTP %{http_code}\n"
 ```
-VITE_GOOGLE_CLIENT_ID=99472736316-kld5l0j39bdnd04nfgq2a86hs6th60hk.apps.googleusercontent.com
-```
 
-This was registered as a new OAuth client for the `safeepitch` deployment.
+- If you see `HTTP 302` → the client is working at the network level, the problem is on the consent screen / browser interaction
+- If you see `HTTP 400` or `HTTP 401` → the client ID is wrong or deleted
 
-## One-time Google Cloud Console setup
+## Steps to fix
 
-After creating the OAuth client, two more steps are required before login works for real users:
+### 1. Configure the consent screen
 
-### 1. Authorized JavaScript origins
+1. Go to Google Cloud Console: https://console.cloud.google.com/
+2. Select the project that owns the OAuth client (top-left project picker)
+3. Navigate to: **APIs & Services → OAuth consent screen**
+   - Direct link: https://console.cloud.google.com/apis/credentials/consent
+4. Click **CONFIGURE CONSENT SCREEN** (or **EDIT APP** if it exists)
+5. Fill in:
+   - **App name:** SafeDeck
+   - **User support email:** mathuraditya00@gmail.com
+   - **Developer contact:** mathuraditya00@gmail.com
+   - **Scopes:** add `openid`, `email`, `profile` (and the Drive/Sheets scopes later)
+6. Save. Status will be **"Testing"** — that's fine for now, no Google review needed
 
-Go to: https://console.cloud.google.com/apis/credentials
+### 2. Add test users
 
-Click the OAuth client `99472736316-...`, then add to **Authorized JavaScript origins**:
-- `http://localhost:3000` (for local dev)
-- `https://d36t7grotgwbz5.cloudfront.net` (for prod)
-- `https://safedeck.ai` (when the domain is set up)
+If the app is in "Testing" status, only the email addresses on the **Test users** list can log in. Add yours:
 
-Without this, Google blocks login with **"The OAuth client was not found"** or **"This browser or app may not be secure"**.
+1. Same page, scroll to **Test users**
+2. Click **+ ADD USERS**
+3. Add `mathuraditya00@gmail.com` (and any other beta emails)
+4. Save
 
-### 2. OAuth consent screen — test users or publish
+### 3. Add Authorized JavaScript origins to the OAuth client
 
-Go to: https://console.cloud.google.com/apis/credentials/consent
+1. Navigate to: **APIs & Services → Credentials**
+2. Click the OAuth client `99472736316-...`
+3. Under **Authorized JavaScript origins**, add:
+   - `http://localhost:3000`
+   - `http://127.0.0.1:3000`
+4. Save
 
-**For beta:**
-- Either add each beta user's email to **Test users** (works up to 100 users, no review needed)
-- Or click **PUBLISH APP** to move out of "Testing" mode. Note: apps requesting sensitive scopes (`spreadsheets`, `drive`) need Google's verification (~2 weeks) before they're fully unrestricted. Until then, only test users can log in.
+### 4. Clear browser cache and retry
 
-## Scopes requested
+Google's OAuth flow caches state. After fixing the consent screen:
 
-The current login request asks for:
-- `openid profile email` — basic identity (always needed)
-- `https://www.googleapis.com/auth/spreadsheets` — read/write user's Google Sheets
-- `https://www.googleapis.com/auth/drive.readonly` — read user's Drive
-- `https://www.googleapis.com/auth/drive.file` — write to user's Drive
+- Hard refresh the page (Cmd+Shift+R on Mac, Ctrl+Shift+R on Windows)
+- Or open an Incognito window
+- Click **Login** on the SafeDeck landing page
 
-If you only need Sheets + Drive for the beta flow, the first three scopes are required. For a lighter MVP, drop the drive scopes until the Sheets integration is in.
+## If it's still broken
 
-## Rebuilding after changing scopes or client ID
+Common follow-up errors and what they mean:
 
-1. Edit `apps/web/.env` (or set in your shell)
-2. Rebuild Docker:
-   ```bash
-   docker build --no-cache -f docker/Dockerfile.web -t safedeck-web:dev \
-     --build-arg VITE_GOOGLE_CLIENT_ID=99472736316-kld5l0j39bdnd04nfgq2a86hs6th60hk.apps.googleusercontent.com \
-     .
-   docker rm -f safedeck-web && docker run -d --rm -p 3000:80 --name safedeck-web safedeck-web:dev
-   ```
+| Error | Cause | Fix |
+|-------|-------|-----|
+| `401 invalid_client` | Consent screen unconfigured, or wrong client ID | Steps 1, 3 above |
+| `403 access_denied` | Email not on test users list | Step 2 above |
+| `redirect_uri_mismatch` | `http://localhost:3000` not in Authorized redirect URIs | Add it in the OAuth client config |
+| `This browser or app may not be secure` | Headless / automated browser detected | Open the URL in your real browser, not the test browser |
+| `Access blocked: SafeDeck has not completed Google verification` | App is in Testing mode and the user's email is not on the test list | Add the email to test users, or publish the app |
+
+## For the production release
+
+When you move from beta to prod:
+
+1. Move the OAuth consent screen from "Testing" to "In Production"
+2. Submit sensitive scopes (`spreadsheets`, `drive`) for Google verification — takes ~2 weeks, free, one-time
+3. While verification is pending, only test users can use the sensitive scopes — for non-test users, scope down the login request to just `openid email profile` (those are non-sensitive)
