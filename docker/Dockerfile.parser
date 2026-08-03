@@ -1,0 +1,44 @@
+# Dockerfile — safedeck-parser Lambda image
+#
+# Parser service: receives a PDF (Drive file ID, S3 key, or base64),
+# parses it with LlamaParse to Markdown, then async-invokes the audit
+# worker Lambda to extract structured data.
+#
+# Direct replacement for the legacy safepitch-parser-func Lambda.
+# Build context: repo root.
+# Build: docker build -f docker/Dockerfile.parser -t safedeck-parser:dev .
+
+ARG APP_SRC=apps/agents
+
+FROM public.ecr.aws/lambda/python:3.10
+
+ARG APP_SRC
+
+# LlamaParse and tiktoken require Rust + a C compiler.
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal && \
+    yum install -y gcc gcc-c++ make && \
+    yum clean all && \
+    rm -rf /var/cache/yum
+
+# Install pip with newer resolver
+RUN pip install --upgrade pip
+
+# Copy just the parser requirements first to cache the pip install layer
+COPY ${APP_SRC}/lambda-parser-requirements.txt ${LAMBDA_TASK_ROOT}/
+
+RUN . "$HOME/.cargo/env" && pip install --no-cache-dir tiktoken && pip install --no-cache-dir -r ${LAMBDA_TASK_ROOT}/lambda-parser-requirements.txt
+
+# Copy the parser handler
+COPY ${APP_SRC}/src/safedeck/handlers/parser.py ${LAMBDA_TASK_ROOT}/handler.py
+
+RUN chmod 644 ${LAMBDA_TASK_ROOT}/handler.py
+
+# We also need the rest of the safedeck package so handler.py can resolve
+# its imports (boto3, etc. — they come from the parser requirements, but
+# safedeck modules need to be on sys.path too).
+COPY ${APP_SRC}/src/ ${LAMBDA_TASK_ROOT}/src/
+
+ENV PYTHONPATH=${LAMBDA_TASK_ROOT}/src
+
+# Lambda runtime contract
+CMD [ "handler.lambda_handler" ]

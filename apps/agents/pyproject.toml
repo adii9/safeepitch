@@ -1,19 +1,37 @@
 [project]
 name = "safeepitch"
-version = "0.2.0"
-description = "SafeDeck AI agents — CrewAI pipeline for pitch deck analysis"
+version = "0.3.0"
+description = "SafeDeck AI agents — CrewAI pipeline for pitch deck analysis (production deps)"
 authors = [{ name = "SafeDeck", email = "team@safedeck.ai" }]
 requires-python = ">=3.10,<3.14"
+# These dependencies are exactly what the production Lambda image installs.
+# Trimmed from the original safepitch/pyproject.toml — removed unused
+# anthropic/fastapi/email-validator etc. that were never imported in the
+# actual deployed lambda_function.py. Confirmed by inspecting the
+# safedeck/minimax ECR image's site-packages.
 dependencies = [
     "crewai[google-genai,tools]==1.8.1",
     "crewai-tools>=1.8.1",
     "litellm>=1.0.0",
     "pydantic>=2.5.0",
     "PyYAML>=6.0",
+    # Parser-specific. The audit-worker Lambda doesn't need these but the
+    # parser Lambda does. Both share the same image so install both.
+    "llama-parse>=0.4.0",
+    "google-api-python-client>=2.100.0",
+    "google-auth-httplib2>=0.1.0",
+    "google-auth-oauthlib>=1.1.0",
+    "boto3>=1.34.0",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "ruff>=0.6.0", "mypy>=1.7.0"]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6.0",
+    "mypy>=1.7.0",
+    "pdfplumber>=0.10.0",  # Used by scripts/run_crew_smoke.py
+    "python-dotenv>=1.0.0",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -25,6 +43,7 @@ packages = ["src/safedeck"]
 [tool.hatch.build.targets.wheel.force-include]
 "src/safedeck/config" = "safedeck/config"
 "src/safedeck/data" = "safedeck/data"
+"src/safedeck/knowledge" = "safedeck/knowledge"
 
 [tool.ruff]
 line-length = 100

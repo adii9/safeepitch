@@ -1,0 +1,89 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+
+Description: SafeDeck parser — LlamaParse + Drive + S3 (container image)
+
+# This template deploys the parser as a Lambda container image.
+# Direct replacement for the legacy safepitch-parser-func Lambda.
+# The parser Lambda is invoked by the n8n Gmail trigger and also accepts
+# direct uploads via the dashboard.
+
+Parameters:
+  Environment:
+    Type: String
+  GeminiApiKey:
+    Type: String
+    NoEcho: true
+  SerperApiKey:
+    Type: String
+    NoEcho: true
+  LlamaCloudApiKey:
+    Type: String
+    NoEcho: true
+  EcrImageUri:
+    Type: String
+    Description: ECR image URI for the parser (e.g. account.dkr.ecr.region.amazonaws.com/safedeck/parser:dev)
+  GoogleCredentialsSecretName:
+    Type: String
+    Default: GoogleDriveServiceAccount
+  S3BucketName:
+    Type: String
+    Description: S3 bucket for incoming PDFs
+  CrewAiLambdaName:
+    Type: String
+    Description: ARN of the audit worker Lambda to invoke after parsing
+  SafeDeckUsersTable:
+    Type: String
+    Default: SafeDeckUsers
+
+Resources:
+  ParserFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "safedeck-parser-${Environment}"
+      PackageType: Image
+      ImageUri: !Ref EcrImageUri
+      ImageConfig:
+        Command: ["handler.lambda_handler"]
+      MemorySize: 3008
+      Timeout: 300
+      Tracing: Active
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            Path: /pdf/parse
+            Method: POST
+        N8nWebhook:
+          Type: Api
+          Properties:
+            Path: /internal/parser
+            Method: POST
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          # Parser uses these to find the uploaded PDF and the audit worker
+          S3_BUCKET_NAME: !Ref S3BucketName
+          # ARN of the crewAI Lambda to invoke after parsing
+          CREWAI_LAMBDA_NAME: !Ref CrewAiLambdaName
+          # Google Drive integration (for the n8n Gmail trigger flow)
+          GOOGLE_CREDENTIALS_SECRET_NAME: !Ref GoogleCredentialsSecretName
+          # Tenant config lookup
+          SAFE_DECK_USERS_TABLE: !Ref SafeDeckUsersTable
+          # LlamaParse API key
+          LLAMA_CLOUD_API_KEY: !Ref LlamaCloudApiKey
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Ref S3BucketName
+        - S3WritePolicy:
+            BucketName: !Ref S3BucketName
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SafeDeckUsersTable
+        - LambdaInvocationPolicy:
+            FunctionName: !Ref CrewAiLambdaName
+        - AWSSecretsManagerGetSecretPolicy:
+            SecretArn: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${GoogleCredentialsSecretName}*"
+
+Outputs:
+  FunctionArn:
+    Value: !GetAtt ParserFunction.Arn

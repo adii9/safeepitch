@@ -1,0 +1,59 @@
+# Dockerfile.slim — safedeck-audit-worker Lambda image
+#
+# Standalone image: no Lambda layers. Adopted from the safepitch project's
+# slim Dockerfile (13 Jun 2026 patch) and updated for the new repo structure.
+#
+# What's different from the old repo:
+#   - Source folder is src/safedeck/ (was src/safepitch/)
+#   - Handler file is handlers/audit_worker.py (was Deployment/lambda_function.py)
+#   - Tests/, scripts/ folder excluded from the image (was implicit)
+#   - Imports safedeck.flow instead of safepitch.main
+#
+# Build context: the repo root (parent of docker/).
+# Build: docker build -f docker/Dockerfile.audit-worker-slim
+#   --build-arg APP_SRC=apps/agents -t safedeck-audit-worker:dev .
+
+ARG APP_SRC=apps/agents
+
+FROM --platform=linux/amd64 public.ecr.aws/lambda/python:3.12
+
+ARG APP_SRC
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=${LAMBDA_TASK_ROOT}/src
+
+# Build tools for compiling any C-extensions (chromadb, hnswlib, etc.)
+RUN dnf install -y gcc gcc-c++ make \
+    && dnf clean all
+
+# Install uv
+RUN pip install uv
+
+WORKDIR ${LAMBDA_TASK_ROOT}
+
+# Copy the application subfolder with its pyproject.toml
+# (we don't copy the whole repo to keep the image lean)
+COPY ${APP_SRC}/pyproject.toml ./pyproject.toml
+COPY ${APP_SRC}/README.md ./README.md 2>/dev/null || true
+
+# Install from pyproject — gets exactly what safepitch declares, nothing more.
+# We install to LAMBDA_TASK_ROOT so the package is on sys.path under that root.
+RUN uv pip install --system --no-cache .
+
+# Copy application source
+COPY ${APP_SRC}/src/ ./src/
+COPY ${APP_SRC}/knowledge/ ./knowledge/
+COPY ${APP_SRC}/src/safedeck/handlers/audit_worker.py ./handler.py
+
+# Lambda runs as a non-root user; the runtime needs to read these.
+# Without chmod the import fails with PermissionError at cold start.
+RUN chmod -R o+rX ${LAMBDA_TASK_ROOT}
+
+# Smoke check: the imports that must resolve on Lambda cold start
+RUN python -c "import safedeck.flow; import safedeck.crew; print('SafeDeck imports OK')"
+
+# Lambda runtime contract: the base image's ENTRYPOINT runs the Lambda RIE;
+# CMD names the module.function handler. The new repo renames the handler
+# file to `handler.py` so the CMD stays clean.
+CMD [ "handler.lambda_handler" ]

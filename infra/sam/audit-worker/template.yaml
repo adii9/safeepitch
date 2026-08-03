@@ -1,30 +1,44 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
 
-Description: SafeDeck audit worker — 5 agents + 1 consolidator
+Description: SafeDeck audit worker — 5 agents + 1 consolidator (container image)
+
+# This template deploys the audit worker as a Lambda container image.
+# Image is built from docker/Dockerfile.audit-worker-slim and pushed to ECR
+# via scripts/docker-push.sh before `sam deploy`.
+#
+# Production-parity: this is the direct replacement for the legacy
+# safepitch-minimax Lambda. Environment variables below match the
+# production values captured from AWS Console.
 
 Parameters:
   Environment:
     Type: String
-  MiniMaxApiKey:
+  GeminiApiKey:
+    Type: String
+    NoEcho: true
+  SerperApiKey:
     Type: String
     NoEcho: true
   LlamaCloudApiKey:
     Type: String
     NoEcho: true
-
-Globals:
-  Function:
-    Runtime: python3.11
-    MemorySize: 2048
-    Timeout: 600
-    Tracing: Active
-    Environment:
-      Variables:
-        ENVIRONMENT: !Ref Environment
-        MINIMAX_API_KEY: !Ref MiniMaxApiKey
-        LLAMA_CLOUD_API_KEY: !Ref LlamaCloudApiKey
-        CREW_MODEL: "minimax/MiniMax-M2.7"
+  # Production minimax key for /crew minimax migration
+  MiniMaxApiKey:
+    Type: String
+    NoEcho: true
+  EcrImageUri:
+    Type: String
+    Description: ECR image URI for the audit worker (e.g. account.dkr.ecr.region.amazonaws.com/safedeck/audit-worker:dev)
+  SafeDeckUsersTable:
+    Type: String
+    Default: SafeDeckUsers
+  DynamodbAuditsTable:
+    Type: String
+    Default: SafepitchAudits
+  S3BucketName:
+    Type: String
+    Description: S3 bucket for CrewAI flows.db state persistence
 
 Resources:
   AuditQueue:
@@ -45,26 +59,46 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub "safedeck-audit-worker-${Environment}"
-      CodeUri: ./handler
-      Handler: handler.lambda_handler
+      PackageType: Image
+      ImageUri: !Ref EcrImageUri
+      ImageConfig:
+        Command: ["handler.lambda_handler"]
+      MemorySize: 2048
+      Timeout: 600
+      Tracing: Active
       ReservedConcurrentExecutions: 2
-      ProvisionedConcurrencyConfig:
-        ProvisionedConcurrentExecutions: 2
+      EphemeralStorage:
+        Size: 2048
       Events:
         Queue:
           Type: SQS
           Properties:
             Queue: !GetAtt AuditQueue.Arn
             BatchSize: 1
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          # Production model — matches deploy to safedeck/minimax:latest
+          # Override CREW_MODEL via env var to point at MiniMax instead of Gemini.
+          CREW_MODEL: "gemini/gemini-3.1-flash-lite-preview"
+          # Used by handler.lambda_handler for tenant config lookup
+          SAFE_DECK_USERS_TABLE: !Ref SafeDeckUsersTable
+          DYNAMODB_TABLE_NAME: !Ref DynamodbAuditsTable
+          S3_BUCKET_NAME: !Ref S3BucketName
+          # Keys (set via Secrets Manager in production; parametric here for SAM)
+          GEMINI_API_KEY: !Ref GeminiApiKey
+          SERPER_API_KEY: !Ref SerperApiKey
+          MINIMAX_API_KEY: !Ref MiniMaxApiKey
+          LLAMA_CLOUD_API_KEY: !Ref LlamaCloudApiKey
       Policies:
         - S3ReadPolicy:
-            BucketName: !Sub "safedeck-decks-${Environment}"
+            BucketName: !Ref S3BucketName
+        - S3WritePolicy:
+            BucketName: !Ref S3BucketName
         - DynamoDBCrudPolicy:
-            TableName: !Sub "safedeck-Audits-${Environment}"
+            TableName: !Ref SafeDeckUsersTable
         - DynamoDBCrudPolicy:
-            TableName: !Sub "safedeck-Companies-${Environment}"
-        - DynamoDBCrudPolicy:
-            TableName: !Sub "safedeck-Deals-${Environment}"
+            TableName: !Ref DynamodbAuditsTable
         - SQSPollerPolicy:
             QueueName: !GetAtt AuditQueue.QueueName
 
