@@ -1,7 +1,21 @@
 """SafeDeck CrewAI assembly.
 
 5 agents + 1 consolidator. Sequential process. Configurable model via
-the CREW_MODEL env var (default: gemini-2.5-flash for local testing).
+the CREW_MODEL env var.
+
+Model selection:
+    CREW_MODEL          - default model for all agents (risk, scoring, etc.)
+    EXTRACTION_MODEL    - model for the extraction_specialist agent only
+
+Why two models: the extraction agent must produce valid structured JSON
+with 49+ fields from a 36 KB deck. Weak models (e.g. gemini-3.1-flash-lite-preview)
+fail silently — they return empty objects. gemini-2.5-flash has the context
+window and instruction-following to get this right. The other agents work
+fine on the lighter model.
+
+Production default (matches the safepitch-minimax Lambda):
+    CREW_MODEL       = gemini/gemini-3.1-flash-lite-preview
+    EXTRACTION_MODEL = gemini/gemini-2.5-flash
 """
 
 from crewai import Agent, Crew, Process, Task
@@ -18,9 +32,16 @@ from safedeck.models import (
 
 import os
 
-# Default model. Tested locally with `gemini/gemini-2.5-flash`. Production
-# deploys override to MiniMax M2.7 via the Lambda env var.
+# Default model for most agents. Production uses gemini-3.1-flash-lite-preview.
 DEFAULT_MODEL = os.environ.get("CREW_MODEL", "gemini/gemini-2.5-flash")
+
+# Dedicated model for the extraction agent. This is the only agent that
+# must produce structured JSON with 49+ fields from a long deck input —
+# lighter models skip fields or return empty objects. See module docstring.
+EXTRACTION_MODEL = os.environ.get(
+    "EXTRACTION_MODEL",
+    os.environ.get("CREW_MODEL", "gemini/gemini-2.5-flash"),
+)
 
 
 @CrewBase
@@ -45,7 +66,7 @@ class SafeDeckCrew:
     def extraction_specialist(self) -> Agent:
         return Agent(
             config=self.agents_config["extraction_specialist"],
-            llm=DEFAULT_MODEL,
+            llm=EXTRACTION_MODEL,
             verbose=True,
         )
 

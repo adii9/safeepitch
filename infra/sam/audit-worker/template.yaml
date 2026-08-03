@@ -81,6 +81,10 @@ Resources:
           # Production model — matches deploy to safedeck/minimax:latest
           # Override CREW_MODEL via env var to point at MiniMax instead of Gemini.
           CREW_MODEL: "gemini/gemini-3.1-flash-lite-preview"
+          # Extraction agent uses a stronger model so it can produce structured
+          # JSON with 49+ fields from a 36 KB deck. The other agents work fine
+          # on the lighter model. See apps/agents/src/safedeck/crew.py.
+          EXTRACTION_MODEL: "gemini/gemini-2.5-flash"
           # Used by handler.lambda_handler for tenant config lookup
           SAFE_DECK_USERS_TABLE: !Ref SafeDeckUsersTable
           DYNAMODB_TABLE_NAME: !Ref DynamodbAuditsTable
