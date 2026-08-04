@@ -98,6 +98,23 @@ class SafeDeckFlow(Flow):
             inputs["rating_criteria"] = rating_criteria
             print("rating_criteria injected into crew inputs.")
 
+        # PRE-CREW EXTRACTION: call Gemini directly with the deck + schema.
+        # This bypasses CrewAI's chained context which was dropping extraction
+        # results for large decks. The extracted data is then merged into the
+        # crew's risk/scoring/verification output in save_final_step.
+        from safedeck.extraction import extract_fields_direct
+        print(f"--- Direct extraction for {inputs['company_name']} ---")
+        pre_extracted = extract_fields_direct(
+            deck_text=inputs.get("pitch_deck_content", ""),
+            fields=all_fields,
+            email_body=inputs.get("email_body", ""),
+        )
+        nonempty = {k: v for k, v in pre_extracted.items() if v and v != "Not stated"}
+        print(f"Direct extraction: {len(nonempty)}/{len(all_fields)} fields populated")
+        # IMPORTANT: write to self.state['inputs'], not the local inputs dict.
+        # save_final_step reads from self.state.
+        self.state["inputs"]["_pre_extracted_deck_data"] = pre_extracted
+
         print(f"--- Starting Verified Audit for {inputs['company_name']} ---")
 
         result = SafeDeckCrew(client_schema=client_schema).crew().kickoff(inputs=inputs)
@@ -116,6 +133,22 @@ class SafeDeckFlow(Flow):
             summary = verification.get("summary") or ""
             risk = report.get("risk_analysis") or {}
             verified = report.get("internet_verified_data") or {}
+
+            # Merge the pre-extracted deck data: direct Gemini call
+            # populated this BEFORE the crew ran. If the crew's chained
+            # context dropped the extraction, the pre-extracted data is
+            # still here. This is the fix for the silent extraction failure.
+            pre_extracted = self.state.get("inputs", {}).get("_pre_extracted_deck_data")
+            if pre_extracted and isinstance(pre_extracted, dict):
+                existing = report.get("extracted_deck_data") or {}
+                if not existing or not any(v and v != "Not stated" for v in existing.values()):
+                    print(f"[merge] using pre-extracted data ({len([v for v in pre_extracted.values() if v and v != 'Not stated'])} fields populated)")
+                    report["extracted_deck_data"] = pre_extracted
+                else:
+                    # Merge: prefer pre-extracted values where they have data
+                    merged = {**existing, **{k: v for k, v in pre_extracted.items() if v and v != "Not stated"}}
+                    report["extracted_deck_data"] = merged
+                    print(f"[merge] merged pre-extracted into existing (total {len([v for v in merged.values() if v and v != 'Not stated'])} non-empty)")
 
             override = make_verification_report(
                 red_flags=risk.get("red_flags", []),

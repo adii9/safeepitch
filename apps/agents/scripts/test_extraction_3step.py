@@ -36,7 +36,13 @@ def run_full_pipeline(deck_text: str, email_body: str, fields: list) -> dict:
     """Run the full chained agent pipeline (5 agents)."""
     from safedeck.flow import SafeDeckFlow
 
-    client_schema = {'kyc': fields, 'financial': [], 'market': []}
+    # Convert fields list into the evaluation_criteria dict the flow expects
+    field_keys = [f['key'] for f in fields if f['key'] != 'company_name']
+    evaluation_criteria = {
+        'must_have': [k for k in field_keys if k in {'promoter_name', 'founder_background', 'past_exits'}],
+        'nice_to_have': [k for k in field_keys if k not in {'promoter_name', 'founder_background', 'past_exits'}],
+    }
+
     flow = SafeDeckFlow()
     flow.state['inputs'] = {
         'company_name': 'Monitra Healthcare',
@@ -46,6 +52,7 @@ def run_full_pipeline(deck_text: str, email_body: str, fields: list) -> dict:
         'dynamic_financial_fields': '',
         'dynamic_market_fields': '',
         'rating_criteria': 'Score out of 10.',
+        'evaluation_criteria': evaluation_criteria,
     }
     flow.kickoff()
     report = flow.state.get('audit_report', '{}')
