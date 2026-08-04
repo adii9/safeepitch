@@ -107,7 +107,10 @@ class SafeDeckCrew:
     def pitch_deck_extraction_task(self) -> Task:
         return Task(
             config=self.tasks_config["pitch_deck_extraction_task"],
-            output_json=self.ExtractionModel,
+            # NOTE: Pydantic output_json enforcement causes silent failures
+            # when the model produces partial JSON for 49 fields. The freeform
+            # approach + PostProcessing in flow.py handles extraction more robustly.
+            # output_json=self.ExtractionModel,
         )
 
     @task
