@@ -1,162 +1,183 @@
-# SafeDeck — LangGraph v2 Architecture
+# SafeDeck v2 Architecture: The LLM Engine
 
-This document describes the v2 orchestrator architecture. It replaces the CrewAI chained-task pipeline that was deployed in v1.
+## What SafeDeck is
 
-## Why a new architecture?
+SafeDeck is **an LLM engine that sits between a VC firm and its founders**. The product is the orchestrator itself, not a pipeline.
 
-The v1 architecture (CrewAI) treated each audit as a single pipeline run: PDF → parse → 5 agents → DDB. This broke down in two ways:
+The engine:
+- Receives every email a VC firm gets from founders
+- Understands the email's context (pitch deck / reply / follow up / scheduling / irrelevant / question)
+- Reasons about the deal state + VC's criteria + public sources
+- Decides which actions to take per email
+- Tracks state across multiple emails from the same founder
+- Continues running, not one-shot
 
-1. **No deal state**: A "deal" is long-lived (from first email to "funded" or "passed"), but the pipeline only ran once per email. State lived in the database, but the logic didn't track it.
-2. **Chained-task brittleness**: CrewAI's chained context was dropping extraction results. With 49 fields in a 90KB deck, the extraction agent would silently return empty.
-3. **Email-driven, not PDF-driven**: The architecture assumed PDFs, but in reality the system gets emails — some with PDFs, some without, some with replies, some with meeting links.
+## Why this is different from v1
 
-The v2 architecture treats **email as the trigger** and **deal state** as the unit of work. The orchestrator handles the full deal lifecycle.
+**v1 (CrewAI)** treated each audit as a one-shot pipeline run. PDF in → 5 agents → DDB. Each email was independent.
 
-## High-level structure
+**v2 (LangGraph + ReAct agent)** treats each deal as a long-lived conversation:
+- Multiple emails from the same founder are linked
+- The LLM agent has memory of what it already asked, what was already extracted
+- The agent decides what to do based on context, not a fixed pipeline
+- Different email types trigger different actions
 
-```mermaid
-graph TD
-    START([Email arrives]) --> classify_email
-    classify_email -. pitch_deck .-> parse
-    classify_email -. follow_up .-> parse
-    classify_email -. reply .-> parse_reply
-    classify_email -. scheduling .-> create_meeting
-    classify_email -. irrelevant .-> archive
-
-    parse --> extract
-    extract --> verify
-    verify --> risk
-    risk --> score
-    score --> save_after_audit
-    save_after_audit --> wait_for_founder
-
-    parse_reply --> merge_reply
-    merge_reply -. missing .-> outreach
-    merge_reply -. complete .-> END1([End])
-
-    wait_for_founder -. missing .-> outreach
-    wait_for_founder -. complete .-> END2([End])
-
-    create_meeting --> wait_for_meeting
-    wait_for_meeting --> meeting_notes
-    meeting_notes --> generate_l1
-    generate_l1 --> generate_l2
-    generate_l2 --> final_save
-    final_save --> END3([End])
-
-    archive --> END4([End])
-    outreach --> END5([End])
-```
-
-## Node responsibilities
-
-| Node | What it does | Output |
-|------|--------------|--------|
-| `classify_email` | LLM decides email type: `pitch_deck` \| `reply` \| `follow_up` \| `scheduling` \| `irrelevant` | `state.email_classification` |
-| `parse` | LlamaParse the PDF (text + OCR for images) | `state._deck_text` |
-| `extract` | Direct Gemini call: 49 fields from deck + email body | `state.extracted_deck_data` |
-| `verify` | For each non-pitch_deck field, Serper search for source | `state.internet_verified_data`, `state.missing_fields` |
-| `risk` | Gemini reasoning on red/green flags | `state.risk_analysis` |
-| `score` | Apply VC's rating criteria (weights) | `state.scoring` |
-| `save_after_audit` | DDB write | (side effect) |
-| `parse_reply` | Parse founder's reply for structured info | (parsed fields) |
-| `merge_reply` | Merge into existing deal state | `state.extracted_deck_data` updated |
-| `outreach` | Send founder email asking for missing fields | `state.pending_actions` |
-| `wait_for_founder` | Suspend until next email from founder arrives | (resumed by webhook) |
-| `create_meeting` | Calendly integration | `state.meeting_id` |
-| `wait_for_meeting` | Suspend until meeting + Fireflies notes | (resumed by webhook) |
-| `meeting_notes` | Receive Fireflies transcript | `state.meeting_transcript` |
-| `generate_l1` | Fill L1 template with deal data | `state.l1_note_path` |
-| `generate_l2` | Fill L2 template (term sheet) with deal data | `state.l2_note_path` |
-| `final_save` | DDB write (final state) | (side effect) |
-| `archive` | Mark as terminal state | (log) |
-
-## State machine
-
-Each deal has a `stage` field that tracks its position in the lifecycle:
+## The architecture
 
 ```
-new
-  ↓
-classifying
-  ↓
-extracting (pitch_deck path)
-  ↓
-verifying
-  ↓
-analyzing_risk
-  ↓
-awaiting_decision
-  ├─ missing fields → awaiting_info
-  │   ↓ (founder responds)
-  │   info_received
-  │     ↓
-  │   extracting (loop)
-  └─ complete → [VC reviews on frontend]
-        ↓
-  meeting_scheduled (if advance)
-    ↓
-  meeting_done
-    ↓
-  deciding
-    ↓
-  generating_l1 → generating_l2
-    ↓
-  funded | passed
+                    ┌────────────────────────────┐
+                    │     LLM Agent (Gemini)       │
+   [inbox_event] ──> │                            │
+                    │  Reasoning:                  │
+                    │  - WHO is this from?         │
+                    │  - WHAT kind of email?       │
+                    │  - WHAT does deal look like? │
+                    │  - WHAT should I do?         │
+                    │                             │
+                    │  Tools (called as needed):   │
+                    │   ├─ parse_pdf               │
+                    │   ├─ extract_fields          │
+                    │   ├─ verify_claim            │
+                    │   ├─ send_outreach           │
+                    │   ├─ create_meeting          │
+                    │   ├─ persist (DDB)           │
+                    │   └─ generate_l1_l2          │
+                    │                             │
+                    │  Context: deal state,        │
+                    │           VC's criteria,     │
+                    │           email history      │
+                    └────────────────────────────┘
 ```
 
-## Why these specific design choices?
+## How it works on a single email
 
-**Why LangGraph over CrewAI?**
-- Explicit control flow. No "magic" agent chaining.
-- Built-in conditional edges for routing by email type / missing fields.
-- Built-in state persistence (so we can suspend/resume on webhooks).
-- Same LLM APIs underneath. We use Gemini the same way.
+```python
+# Email arrives from a founder
+current_email = {
+    "from_": "avin@monitra.in",
+    "subject": "Pitch deck - Monitra Healthcare",
+    "body": "Hi, attached is our pitch deck. Raising $12M Series B.",
+    "attachments": [{"path": "s3://...monitra.pdf"}]
+}
 
-**Why direct Gemini for extraction?**
-CrewAI's chained-task context was the root cause of the silent extraction failures. A single direct API call is more reliable, faster, and cheaper. See `apps/agents/src/safedeck/extraction.py`.
+# The LLM agent receives:
+# - System prompt: "You are SafeDeck, the deal orchestrator for AWS Funds..."
+# - The current email
+# - The current deal state (extracted_fields, missing_fields, etc.)
+# - The VC's config (rating criteria, templates)
 
-**Why operator.add on pending_actions?**
-Multiple nodes may want to queue actions (outreach + notify VC + archive). The reducer ensures all actions are accumulated rather than overwritten. See `DealState.pending_actions` and the Annotated type.
+# The LLM reasons and decides:
+# "This is a pitch deck PDF. Existing deal exists (Monitra Healthcare).
+#  I should: 1) parse the PDF, 2) extract fields, 3) verify key claims,
+#           4) score, 5) persist"
 
-**Why typed DealState instead of dict?**
-The orchestrator must handle many types (emails, fields, risk flags, scores, notes). Typed state means errors are caught at graph compile time, not at runtime.
+# It calls tools in sequence (or parallel where independent)
+```
+
+The LLM is **the orchestrator**. LangGraph is the runtime. State is per-deal. Tools are the actions.
+
+## Deal state
+
+Per-deal state persists across emails:
+
+```python
+{
+    "deal_id": "deal-monitra-001",
+    "tenant_id": "tenant-aws-funds",
+    "company_name": "Monitra Healthcare",
+    "founder_email": "avin@monitra.in",
+    "emails": [...all emails in this deal thread...],
+    "extracted_fields": {promoter_name: "Avin Agarwal", ...},
+    "missing_fields": [revenue, burn_rate, ...],
+    "verifications": {revenue: {source_url: "tracxn.com/...", confidence: "high"}},
+    "risk_flags": [...],
+    "score": 7.2,
+    "l1_note_url": "s3://...L1.docx",
+    "l2_note_url": "s3://...L2.docx",
+    "pending_actions": [...],
+}
+```
+
+The LLM has full read access to this state and decides what to update.
+
+## Tools
+
+Each tool is a plain Python function the LLM can call:
+
+| Tool | What it does |
+|------|--------------|
+| `parse_pdf` | Download PDF from S3, run LlamaParse, return markdown text |
+| `extract_fields` | Direct Gemini call: 49 fields from deck + email body |
+| `verify_claim` | Serper search for one specific claim, return source + confidence |
+| `send_outreach` | Email the founder for missing data, return queued |
+| `create_meeting` | Calendly event, return meeting_id + URL |
+| `persist` | Write deal state to DynamoDB |
+| `generate_l1_l2` | Render L1 + L2 docxtpl notes, upload to S3 |
+
+The LLM picks the right tool(s) per email.
+
+## Why this is the right architecture
+
+**Email understanding**: The LLM reads the email + context and decides. No hardcoded "if subject contains 'pitch' then extract" rules.
+
+**Multi-email continuity**: Same founder sends 5 emails over 3 weeks. The LLM tracks what it already asked, what was already extracted, what verifications ran.
+
+**Heterogeneous email types**: pitch deck, follow-up, reply, scheduling, irrelevant, question. The LLM decides the right action for each.
+
+**Missing field outreach**: If a deck has gaps, the LLM composes a follow-up email asking for specific fields. It doesn't ask for things already known.
+
+**Hermes's role**: The verify_claim tool is what you called "Hermes" — public-source fact-checking per claim. The LLM decides which claims to verify.
+
+## File layout
+
+```
+apps/agents/src/safedeck/orchestrator/
+  __init__.py         # DealState, AGENT_SYSTEM_PROMPT, make_initial_state
+  tools.py            # 7 tool implementations + tool registry
+  agent.py            # build_orchestrator(), run_orchestrator_on_email()
+
+apps/agents/src/safedeck/extraction.py  # direct Gemini call (used by extract_fields tool)
+```
 
 ## Implementation status
 
-| Component | Status | Notes |
-|-----------|--------|-------|
-| `state.py` (DealState) | ✅ Done | Typed dict with reducers |
-| `__init__.py` (graph) | ✅ Done | 19 nodes, conditional routing |
-| `nodes.py` (stubs) | ✅ Done | 13 nodes, NotImplementedError |
-| `extract_node` (uses Phase 1 direct call) | ⏳ TODO | Wire up the direct Gemini call |
-| `verify_node` | ⏳ TODO | Serper integration per field |
-| `risk_node` | ⏳ TODO | Direct Gemini or CrewAI |
-| `score_node` | ⏳ TODO | Apply rating criteria |
-| `l1_node`, `l2_node` | ⏳ TODO | docxtpl template filling |
-| `outreach_node` | ⏳ TODO | Gmail API |
-| `meeting_node` | ⏳ TODO | Calendly API |
-| `meeting_notes_node` | ⏳ TODO | Fireflies webhook |
-
-## Tests
-
-`tests/test_graph.py` covers:
-- Graph structure (nodes + edges)
-- State initialization
-- Conditional routing (email type, missing fields)
-- Reducers (operator.add on pending_actions)
-- Compilation
-
-**91 tests passing total** (85 from before + 6 new graph tests).
+- [x] `orchestrator/__init__.py` — DealState, system prompt, factory
+- [x] `orchestrator/tools.py` — 7 tool stubs (parse_pdf, extract_fields, etc.)
+- [x] `orchestrator/agent.py` — LangGraph ReAct agent with system prompt
+- [x] `extraction.py` — direct Gemini call (Phase 1)
+- [ ] Wire up real Gmail inbox / SES webhook
+- [ ] Real Serper integration in `verify_claim`
+- [ ] Real DynamoDB write in `persist`
+- [ ] Real Gmail API in `send_outreach`
+- [ ] Real Calendly in `create_meeting`
+- [ ] Real docxtpl in `generate_l1_l2`
+- [ ] Stateful memory across emails (currently single-turn)
+- [ ] Per-VC config (rating criteria, templates)
 
 ## Migration plan
 
-The v2 architecture replaces v1 in three stages:
+1. **Stand up the agent** — the 7 tool stubs work, the LLM reasons. This is the "Hello World" of v2.
+2. **Wire up real tools** — replace each stub with a real implementation. The LLM still orchestrates; the tools just do the actual work.
+3. **Add email ingestion** — Gmail OAuth or SES inbound → trigger the agent.
+4. **Add multi-turn memory** — persist deal state across emails so the LLM has continuity.
+5. **Test in production** — run v1 and v2 in parallel. Compare output.
+6. **Cut over** — when v2 is at parity, switch the audit worker Lambda to call v2.
 
-**Stage 1 (this week)**: Wire up the extraction node to use the direct Gemini call from Phase 1. This is a 1-line change. The graph will then extract fields correctly.
+## Tests
 
-**Stage 2 (next week)**: Implement the rest of the nodes (verify, risk, score, save). At this point the graph can do everything v1 did, but with explicit control flow.
+`tests/test_orchestrator.py` covers:
+- Tool definitions and registry
+- State initialization
+- Agent construction
+- Tool execution (with stubs)
 
-**Stage 3 (after)**: Implement the v2-only features (outreach, meeting, L1/L2 notes). These don't exist in v1 at all.
+The agent's reasoning quality is tested manually via `scripts/test_orchestrator_local.py` (run with a real Gemini key + a real email).
 
-At each stage, we run the v1 and v2 in parallel and compare output. Once v2 is at parity, we cut over.
+## Cost
+
+Per email processed:
+- Agent reasoning: 1-3 LLM calls = $0.005-0.02
+- Tool calls: depends on what the LLM decides. Most emails need parse + extract (~$0.01). Verification adds ~$0.005 per claim.
+- Total per email: **$0.01-0.05**
+
+For 5 VCs × 20 emails/month each = 100 emails/month = **$1-5/month**. Negligible.
